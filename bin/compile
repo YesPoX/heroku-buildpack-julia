@@ -51,17 +51,26 @@ mkdir julia
 tar -xzf julia-*.tar.gz -C julia --strip-components=1
 rm julia-*.tar.gz
 
+# Verify Julia installation by checking the 'julia/bin' directory
+echo "Verifying Julia installation..."
+if [ -d "julia/bin" ]; then
+    echo "Julia directory exists. Listing contents:"
+    ls -lah "julia/bin"
+else
+    echo "ERROR: Julia directory does not exist."
+    exit 1
+fi
+
 # Set environment variables for runtime
 set-env PATH "\$HOME/.apt/usr/bin:\$HOME/julia/bin:\$PATH"
 set-env LIBRARY_PATH "\$HOME/.apt/usr/lib/x86_64-linux-gnu:\$HOME/julia/lib:\$HOME/julia/lib/x86_64-linux-gnu:\$LIBRARY_PATH"
 set-env LD_LIBRARY_PATH "\$HOME/.apt/usr/lib/x86_64-linux-gnu:\$HOME/julia/lib:\$HOME/julia/lib/x86_64-linux-gnu:\$LD_LIBRARY_PATH"
 set-env JULIA_LOAD_PATH "@:\$HOME:"
 
-# Execute Julia to instantiate and precompile packages
-julia --project=. -e "using Pkg; Pkg.instantiate(); Pkg.precompile();"
+# Adjusted the call to Julia for package operations to use the full path
+"$BUILD_DIR/julia/bin/julia" --project=. -e "using Pkg; Pkg.instantiate(); Pkg.precompile();"
 
 # Copy the .julia directory to the build directory to cache the packages
 cp -r ~/.julia "${BUILD_DIR}/.julia"
 
-# Added debugging information outputs
 echo " done"
