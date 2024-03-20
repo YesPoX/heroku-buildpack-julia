@@ -1,11 +1,14 @@
 #!/usr/bin/env bash
 # bin/compile <build-dir> <cache-dir>
 
-# fail fast
+# Fail fast and enable debugging to make the script output more verbose
 set -e
+set -x
 
+# Directory to store custom set environment variables
 PROFILE_PATH=".profile.d/julia.sh"
 
+# Function to append environment variables to $PROFILE_PATH
 set-env() {
   echo "export $1=$2" >>$PROFILE_PATH
 }
@@ -14,72 +17,51 @@ set-env() {
 BUILD_DIR=$1
 CACHE_DIR=$2
 
-cd ${BUILD_DIR}
+cd "${BUILD_DIR}"
 
 mkdir -p .profile.d
 
+# Default Julia version to use if not specified in Project.toml
 DEFAULT_JULIA_VERSION=1.8.5
 JULIA_VERSION="$DEFAULT_JULIA_VERSION"
+
+# Extract Julia version from Project.toml, default to $DEFAULT_JULIA_VERSION if not specified
 if [[ -f Project.toml ]]; then
-  JULIA_VERSION="$(sed -rn 's/^julia\s*=\s*"(.*)"/\1/p' Project.toml)"
-  [[ "$JULIA_VERSION" == "" ]] && JULIA_VERSION="$DEFAULT_JULIA_VERSION"
+  # Improved parsing logic for extracting Julia version
+  JULIA_VERSION="$(grep '^julia' Project.toml | cut -d '"' -f 2)"
+  [[ -z "$JULIA_VERSION" ]] && JULIA_VERSION="$DEFAULT_JULIA_VERSION"
 fi
 
-JULIA_MAJOR_VERSION="$(echo "$JULIA_VERSION" | awk '{split($0,a,"."); print a[1]}')"
-JULIA_MINOR_VERSION="$(echo "$JULIA_VERSION" | awk '{split($0,a,"."); print a[2]}')"
-JULIA_PATCH_VERSION="$(echo "$JULIA_VERSION" | awk '{split($0,a,"."); print a[3]}')"
-[[ -z "$JULIA_PATCH_VERSION" ]] && JULIA_VERSION="${JULIA_VERSION}.0"
+# Construct the Julia download URL based on the extracted version
+JULIA_URL="https://julialang-s3.julialang.org/bin/linux/x64/$(echo "$JULIA_VERSION" | cut -d '.' -f 1).$(echo "$JULIA_VERSION" | cut -d '.' -f 2)/julia-${JULIA_VERSION}-linux-x86_64.tar.gz"
 
-echo -n "-----> Installing julia $JULIA_VERSION ...."
-deps="https://julialang-s3.julialang.org/bin/linux/x64/${JULIA_MAJOR_VERSION}.${JULIA_MINOR_VERSION}/julia-${JULIA_VERSION}-linux-x86_64.tar.gz"
+echo "-----> Installing julia $JULIA_VERSION ...."
+echo "        - $JULIA_URL"
 
-for dep in $deps; do
-  depb=$(basename $dep)
-  echo "        - $depb"
-  curl -LO $dep
-  mkdir julia
-  tar -xzf $depb -C julia --strip-components=1
-  rm $depb
-done
-
-set-env PATH '$HOME/.apt/usr/bin:$HOME/julia/bin:$PATH'
-set-env LIBRARY_PATH '$HOME/.apt/usr/lib/x86_64-linux-gnu:$HOME/julia/lib:$HOME/julia/lib/x86_64-linux-gnu:$LIBRARY_PATH'
-set-env LD_LIBRARY_PATH '$HOME/.apt/usr/lib/x86_64-linux-gnu:$HOME/julia/lib:$HOME/julia/lib/x86_64-linux-gnu:$LD_LIBRARY_PATH'
-set-env JULIA_LOAD_PATH '@:$HOME:'
-
-export LIBRARY_PATH=./.apt/usr/lib/x86_64-linux-gnu:./julia/lib:./julia/lib/x86_64-linux-gnu:$LIBRARY_PATH
-export LD_LIBRARY_PATH=./.apt/usr/lib/x86_64-linux-gnu:./julia/lib:./julia/lib/x86_64-linux-gnu:$LD_LIBRARY_PATH
-export PATH=./.apt/usr/bin:./julia/bin:$PATH
-export JULIA_LOAD_PATH="@:"
-echo $PATH
-echo $LD_LIBRARY_PATH
-echo $(cmake -version)
-echo $(julia -v)
-
-echo " done"
-
-if [ "${PIPESTATUS[*]}" != "0" ]; then
-  echo " !     Failed to install ${JULIA_DIST}"
+# Download Julia using curl with the -f flag to fail on HTTP errors
+curl -fLO "$JULIA_URL"
+if [ $? -ne 0 ]; then
+  # Provide a clear error message if Julia download fails
+  echo " !     Failed to download Julia $JULIA_VERSION from $JULIA_URL"
   exit 1
 fi
 
-# these are not presistent in heroku
-mkdir -p ~/.julia/config
-set +H
-julia --project=$(pwd) -e "using Pkg; pkg\"instantiate\";pkg\"precompile\";
-  io = open(\"$HOME/.julia/config/startup.jl\", \"w\");
-  deps = Pkg.dependencies()
-  for (uuid, dep) in deps
-    dep.is_direct_dep || continue
-    pkgid = Base.identify_package(dep.name);
-    Base.require(pkgid);
-  end
-  for packagemodule in Base.loaded_modules
-    pkgid = packagemodule[1];
-    buildid = Base.module_build_id(packagemodule[2]);
-    uuid = pkgid.uuid == nothing ? \"nothing\" : \"\"\"Base.UUID(\"\$(pkgid.uuid)\")\"\"\";
-    println(io, \"\"\"Base.push!(Base._concrete_dependencies, Base.PkgId(\$uuid, \"\$(pkgid.name)\") => \$buildid)\"\"\");
-  end
-  close(io)"
+# Extract the downloaded archive to the 'julia' directory
+mkdir julia
+tar -xzf julia-*.tar.gz -C julia --strip-components=1
+rm julia-*.tar.gz
 
-cp -r ~/.julia ${BUILD_DIR}/.julia
+# Set environment variables for runtime
+set-env PATH "\$HOME/.apt/usr/bin:\$HOME/julia/bin:\$PATH"
+set-env LIBRARY_PATH "\$HOME/.apt/usr/lib/x86_64-linux-gnu:\$HOME/julia/lib:\$HOME/julia/lib/x86_64-linux-gnu:\$LIBRARY_PATH"
+set-env LD_LIBRARY_PATH "\$HOME/.apt/usr/lib/x86_64-linux-gnu:\$HOME/julia/lib:\$HOME/julia/lib/x86_64-linux-gnu:\$LD_LIBRARY_PATH"
+set-env JULIA_LOAD_PATH "@:\$HOME:"
+
+# Execute Julia to instantiate and precompile packages
+julia --project=. -e "using Pkg; Pkg.instantiate(); Pkg.precompile();"
+
+# Copy the .julia directory to the build directory to cache the packages
+cp -r ~/.julia "${BUILD_DIR}/.julia"
+
+# Added debugging information outputs
+echo " done"
