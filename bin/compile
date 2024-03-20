@@ -21,38 +21,30 @@ cd "${BUILD_DIR}"
 
 mkdir -p .profile.d
 
-# Default Julia version to use if not specified in Project.toml
-DEFAULT_JULIA_VERSION=1.8.5
-JULIA_VERSION="$DEFAULT_JULIA_VERSION"
-
-# Extract Julia version from Project.toml, default to $DEFAULT_JULIA_VERSION if not specified
-if [[ -f Project.toml ]]; then
-  # Improved parsing logic for extracting Julia version
-  JULIA_VERSION="$(grep '^julia' Project.toml | cut -d '"' -f 2)"
-  [[ -z "$JULIA_VERSION" ]] && JULIA_VERSION="$DEFAULT_JULIA_VERSION"
-fi
+# Specify a default Julia version
+DEFAULT_JULIA_VERSION="1.8.5"
+# Check for JULIA_VERSION environment variable, use Project.toml if not set, or default
+JULIA_VERSION=${JULIA_VERSION:-$(grep '^julia' Project.toml | cut -d '"' -f 2)}
+JULIA_VERSION=${JULIA_VERSION:-$DEFAULT_JULIA_VERSION}
 
 # Construct the Julia download URL based on the extracted version
-JULIA_URL="https://julialang-s3.julialang.org/bin/linux/x64/$(echo "$JULIA_VERSION" | cut -d '.' -f 1).$(echo "$JULIA_VERSION" | cut -d '.' -f 2)/julia-${JULIA_VERSION}-linux-x86_64.tar.gz"
+JULIA_MAJOR_MINOR=$(echo "$JULIA_VERSION" | cut -d '.' -f 1-2)
+JULIA_URL="https://julialang-s3.julialang.org/bin/linux/x64/${JULIA_MAJOR_MINOR}/julia-${JULIA_VERSION}-linux-x86_64.tar.gz"
 
-echo "-----> Installing julia $JULIA_VERSION ...."
+echo "-----> Installing Julia $JULIA_VERSION ...."
 echo "        - $JULIA_URL"
 
-# Download Julia using curl with the -f flag to fail on HTTP errors
-curl -fLO "$JULIA_URL"
-if [ $? -ne 0 ]; then
-  # Provide a clear error message if Julia download fails
+# Download and extract Julia
+curl -fLO "$JULIA_URL" || {
   echo " !     Failed to download Julia $JULIA_VERSION from $JULIA_URL"
   exit 1
-fi
+}
 
-# Extract the downloaded archive to the 'julia' directory
 mkdir julia
-tar -xzf julia-*.tar.gz -C julia --strip-components=1
-rm julia-*.tar.gz
+tar -xzf "julia-${JULIA_VERSION}-linux-x86_64.tar.gz" -C julia --strip-components=1
+rm "julia-${JULIA_VERSION}-linux-x86_64.tar.gz"
 
-# Verify Julia installation by checking the 'julia/bin' directory
-echo "Verifying Julia installation..."
+# Verify Julia installation
 if [ -d "julia/bin" ]; then
     echo "Julia directory exists. Listing contents:"
     ls -lah "julia/bin"
@@ -67,8 +59,8 @@ set-env LIBRARY_PATH "\$HOME/.apt/usr/lib/x86_64-linux-gnu:\$HOME/julia/lib:\$HO
 set-env LD_LIBRARY_PATH "\$HOME/.apt/usr/lib/x86_64-linux-gnu:\$HOME/julia/lib:\$HOME/julia/lib/x86_64-linux-gnu:\$LD_LIBRARY_PATH"
 set-env JULIA_LOAD_PATH "@:\$HOME:"
 
-# Adjusted the call to Julia for package operations to use the full path
-"$BUILD_DIR/julia/bin/julia" --project=. -e "using Pkg; Pkg.instantiate(); Pkg.precompile();"
+# Use the installed Julia for package operations
+"${BUILD_DIR}/julia/bin/julia" --project=. -e 'using Pkg; Pkg.instantiate(); Pkg.precompile();'
 
 # Copy the .julia directory to the build directory to cache the packages
 cp -r ~/.julia "${BUILD_DIR}/.julia"
